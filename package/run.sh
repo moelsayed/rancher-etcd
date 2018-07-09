@@ -39,7 +39,7 @@ LEGACY_DATA_DIR=/data
 DATA_DIR=/pdata
 DR_FLAG=$DATA_DIR/DR
 export ETCD_DATA_DIR=$DATA_DIR/data.current
-export ETCDCTL_ENDPOINT=http://etcd.${STACK_NAME}:2379
+export ETCDCTL_ENDPOINT=https://etcd.${STACK_NAME}:2379
 
 # member name should be dashed-IP (piggyback off of retain_ip functionality)
 NAME=$(echo $IP | tr '.' '-')
@@ -49,7 +49,7 @@ etcdctl_quorum() {
     for container in $(giddyup service containers); do
         primary_ip=$(wget -q -O - ${META_URL}/self/service/containers/${container}/primary_ip)
 
-        giddyup probe http://${primary_ip}:2379/health &> /dev/null
+        giddyup probe https://${primary_ip}:2379/health &> /dev/null
         if [ "$?" == "0" ]; then
             target_ip=$primary_ip
             break
@@ -58,7 +58,7 @@ etcdctl_quorum() {
     if [ "$target_ip" == "0" ]; then
         echo No etcd nodes available
     else
-        etcdctl --endpoints http://${primary_ip}:2379 $@
+        etcdctl --endpoints https://${primary_ip}:2379 $@
     fi
 }
 
@@ -77,7 +77,7 @@ etcdctl_one() {
     if [ "$target_ip" == "0" ]; then
         echo No etcd nodes available
     else
-        etcdctl --endpoints http://${primary_ip}:2379 $@
+        etcdctl --endpoints https://${primary_ip}:2379 $@
     fi
 }
 
@@ -146,7 +146,7 @@ standalone_node() {
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
         --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
-        --listen-peer-urls https://0.0.0.0:2380 \
+        --listen-peer-urls http://0.0.0.0:2380 \
         --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster ${NAME}=http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state new \
@@ -164,7 +164,7 @@ restart_node() {
     etcd \
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
-        --advertise-client-urls http://${ETCD_CONTAINER_NAME}:2379 \
+        --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
         --listen-peer-urls http://0.0.0.0:2380 \
         --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
@@ -189,7 +189,7 @@ runtime_node() {
         ctx_index=$(wget -q -O - ${META_URL}/self/service/containers/${container}/create_index)
         primary_ip=$(wget -q -O - ${META_URL}/self/service/containers/${container}/primary_ip)
         if [ "${ctx_index}" -lt "${CREATE_INDEX}" ]; then
-            giddyup probe http://${primary_ip}:2379/health --loop --min 1s --max 15s --backoff 1.2
+            giddyup probe https://${primary_ip}:2379/health --loop --min 1s --max 15s --backoff 1.2
         fi
     done
 
@@ -222,7 +222,7 @@ runtime_node() {
     etcd \
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
-        --advertise-client-urls http://${ETCD_CONTAINER_NAME}:2379 \
+        --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
         --listen-peer-urls http://0.0.0.0:2380 \
         --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
@@ -267,7 +267,7 @@ recover_node() {
     etcd \
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
-        --advertise-client-urls http://${ETCD_CONTAINER_NAME}:2379 \
+        --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
         --listen-peer-urls http://0.0.0.0:2380 \
         --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
@@ -275,7 +275,7 @@ recover_node() {
         --client-cert-auth \
         --trusted-ca-file $ETCD_CA_FILE \
         --key-file $ETCD_KEY_FILE \
-        --cert-file $ETCD_CERT_FILE 
+        --cert-file $ETCD_CERT_FILE
     cleanup $?
 }
 
@@ -295,21 +295,21 @@ disaster_node() {
     PID=$!
 
     # wait until etcd reports healthy
-    giddyup probe http://127.0.0.1:2379/health --loop --min 1s --max 15s --backoff 1.2
+    giddyup probe https://127.0.0.1:2379/health --loop --min 1s --max 15s --backoff 1.2
 
     # Disaster recovery ignores peer-urls flag, so we update it
 
     # query etcd for its old member ID
     while [ "$oldnode" == "" ]; do
-        oldnode=$(etcdctl --endpoints=http://127.0.0.1:2379 member list | grep "$NAME" | tr ':' '\n' | head -1)
+        oldnode=$(etcdctl --endpoints=https://127.0.0.1:2379 member list | grep "$NAME" | tr ':' '\n' | head -1)
         sleep 1
     done
 
     # etcd says it is healthy, but writes fail for a while...so keep trying until it works
-    etcdctl --endpoints=http://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
+    etcdctl --endpoints=https://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
     while [ "$?" != "0" ]; do
         sleep 1
-        etcdctl --endpoints=http://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
+        etcdctl --endpoints=https://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
     done
 
     # shutdown the node cleanly
