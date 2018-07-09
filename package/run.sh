@@ -9,12 +9,25 @@ while [ "$STACK_NAME" == "" ]; do
   sleep 1
   STACK_NAME=$(wget -q -O - ${META_URL}/self/stack/name)
 done
+# Get etcd service certificates
+UUID=$(curl -s http://rancher-metadata/2015-12-19/stacks/Kubernetes/services/etcd/uuid)
+ACTION=$(curl -s -u $CATTLE_ACCESS_KEY:$CATTLE_SECRET_KEY "$CATTLE_URL/services?uuid=$UUID" | jq -r '.data[0].actions.certificate')
+
+if [ -n "$ACTION" ]; then
+    mkdir -p /etc/etcd/ssl
+    cd /etc/etcd/ssl
+    curl -s -u $CATTLE_ACCESS_KEY:$CATTLE_SECRET_KEY -X POST $ACTION > certs.zip
+    unzip -o certs.zip
+    cd $OLDPWD
+
+fi
 
 SCALE=$(giddyup service scale etcd)
 
 while [ ! "$(echo $IP | grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$')" ]; do
     sleep 1
     IP=$(wget -q -O - ${META_URL}/self/container/primary_ip)
+    ETCD_CONTAINER_NAME=$(curl -s http://rancher-metadata/2015-12-19/self/container/name)
 done
 
 CREATE_INDEX=$(wget -q -O - ${META_URL}/self/container/create_index)
@@ -131,12 +144,17 @@ standalone_node() {
     rolling_backup &
     etcd \
         --name ${NAME} \
-        --listen-client-urls http://0.0.0.0:2379 \
-        --advertise-client-urls http://${IP}:2379 \
-        --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${IP}:2380 \
-        --initial-cluster ${NAME}=http://${IP}:2380 \
-        --initial-cluster-state new
+        --listen-client-urls https://0.0.0.0:2379 \
+        --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
+        --listen-peer-urls https://0.0.0.0:2380 \
+        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
+        --initial-cluster ${NAME}=http://${ETCD_CONTAINER_NAME}:2380 \
+        --initial-cluster-state new \
+        --client-cert-auth \
+        --trusted-ca-file $ETCD_CA_FILE \
+        --key-file $ETCD_KEY_FILE \
+        --cert-file $ETCD_CERT_FILE
+
     cleanup $?
 }
 
@@ -145,11 +163,16 @@ restart_node() {
     rolling_backup &
     etcd \
         --name ${NAME} \
-        --listen-client-urls http://0.0.0.0:2379 \
-        --advertise-client-urls http://${IP}:2379 \
+        --listen-client-urls https://0.0.0.0:2379 \
+        --advertise-client-urls http://${ETCD_CONTAINER_NAME}:2379 \
         --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${IP}:2380 \
-        --initial-cluster-state existing
+        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
+        --initial-cluster-state existing \
+        --client-cert-auth \
+        --trusted-ca-file $ETCD_CA_FILE \
+        --key-file $ETCD_KEY_FILE \
+        --cert-file $ETCD_CERT_FILE
+
     cleanup $?
 }
 
@@ -189,7 +212,7 @@ runtime_node() {
         cluster=${cluster}${cname}=http://${cip}:2380
     done
 
-    etcdctl_quorum member add $NAME http://${IP}:2380
+    etcdctl_quorum member add $NAME http://${ETCD_CONTAINER_NAME}:2380
 
     # write container IP to data directory for reference
     echo $IP > $ETCD_DATA_DIR/ip
@@ -198,12 +221,16 @@ runtime_node() {
     rolling_backup &
     etcd \
         --name ${NAME} \
-        --listen-client-urls http://0.0.0.0:2379 \
-        --advertise-client-urls http://${IP}:2379 \
+        --listen-client-urls https://0.0.0.0:2379 \
+        --advertise-client-urls http://${ETCD_CONTAINER_NAME}:2379 \
         --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${IP}:2380 \
+        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
-        --initial-cluster $cluster
+        --initial-cluster $cluster \
+        --client-cert-auth \
+        --trusted-ca-file $ETCD_CA_FILE \
+        --key-file $ETCD_KEY_FILE \
+        --cert-file $ETCD_CERT_FILE
     cleanup $?
 }
 
@@ -228,9 +255,9 @@ recover_node() {
         fi
         cluster=${cluster}${name}=${peer_url}
     done <<< "$(etcdctl_quorum member list | grep -v unstarted)"
-    cluster=${cluster},${NAME}=http://${IP}:2380
+    cluster=${cluster},${NAME}=http://${ETCD_CONTAINER_NAME}:2380
 
-    etcdctl_quorum member add $NAME http://${IP}:2380
+    etcdctl_quorum member add $NAME http://${ETCD_CONTAINER_NAME}:2380
 
     # write container IP to data directory for reference
     echo $IP > $ETCD_DATA_DIR/ip
@@ -239,12 +266,16 @@ recover_node() {
     rolling_backup &
     etcd \
         --name ${NAME} \
-        --listen-client-urls http://0.0.0.0:2379 \
-        --advertise-client-urls http://${IP}:2379 \
+        --listen-client-urls https://0.0.0.0:2379 \
+        --advertise-client-urls http://${ETCD_CONTAINER_NAME}:2379 \
         --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${IP}:2380 \
+        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
-        --initial-cluster $cluster
+        --initial-cluster $cluster \
+        --client-cert-auth \
+        --trusted-ca-file $ETCD_CA_FILE \
+        --key-file $ETCD_KEY_FILE \
+        --cert-file $ETCD_CERT_FILE 
     cleanup $?
 }
 
@@ -275,10 +306,10 @@ disaster_node() {
     done
 
     # etcd says it is healthy, but writes fail for a while...so keep trying until it works
-    etcdctl --endpoints=http://127.0.0.1:2379 member update $oldnode http://${IP}:2380
+    etcdctl --endpoints=http://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
     while [ "$?" != "0" ]; do
         sleep 1
-        etcdctl --endpoints=http://127.0.0.1:2379 member update $oldnode http://${IP}:2380
+        etcdctl --endpoints=http://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
     done
 
     # shutdown the node cleanly
