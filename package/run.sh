@@ -44,40 +44,83 @@ export ETCDCTL_ENDPOINT=https://etcd.${STACK_NAME}:2379
 # member name should be dashed-IP (piggyback off of retain_ip functionality)
 NAME=$(echo $IP | tr '.' '-')
 
+# giddyup doesn't do https auth, so we are doing this
+# probe_https URL loop|noloop MIN MAX BACKOFF
+probe_https() {
+  url=${1}
+  loop=${2:-"noloop"}
+  min=${3:-1}
+  max=${4:-15}
+  backoff=${5:-1}
+
+  delay=$min
+  if [ $loop == "loop" ]
+  then
+    while true
+    do
+      # This is what we get for using bash for this..
+      if [ $(echo  $delay\>$max | bc) -eq 1 ]
+      then
+        delay=$max
+      else
+        delay=$(echo $delay*$backoff| bc)
+      fi
+      curl -s -k --cacert $ETCD_CA_FILE \
+        --cert $ETCD_CERT_FILE\
+        --key $ETCD_KEY_FILE \
+        $url | grep -q '{"health": "true"}'
+      if [ $? -eq 0 ]
+      then
+        return 0
+      fi
+      sleep $delay
+    done
+  else
+    curl -s -k --cacert $ETCD_CA_FILE \
+      --cert $ETCD_CERT_FILE\
+      --key $ETCD_KEY_FILE \
+      $url | grep -q '{"health": "true"}'
+    return $?
+  fi
+}
+
 etcdctl_quorum() {
     target_ip=0
     for container in $(giddyup service containers); do
         primary_ip=$(wget -q -O - ${META_URL}/self/service/containers/${container}/primary_ip)
 
-        giddyup probe https://${primary_ip}:2379/health &> /dev/null
+        probe_https https://${container}:2379/health &> /dev/null
         if [ "$?" == "0" ]; then
             target_ip=$primary_ip
+            container_name=$container
             break
         fi
     done
     if [ "$target_ip" == "0" ]; then
         echo No etcd nodes available
     else
-        etcdctl --endpoints https://${primary_ip}:2379 $@
+        etcdctl --endpoints https://${container}:2379 $@
     fi
 }
 
 # may only be used for quorum=false reads
 etcdctl_one() {
     target_ip=0
+    container_name=""
     for container in $(giddyup service containers); do
         primary_ip=$(wget -q -O - ${META_URL}/self/service/containers/${container}/primary_ip)
 
         giddyup probe tcp://${primary_ip}:2379 &> /dev/null
         if [ "$?" == "0" ]; then
             target_ip=$primary_ip
+            container_name=$container
             break
         fi
     done
     if [ "$target_ip" == "0" ]; then
         echo No etcd nodes available
     else
-        etcdctl --endpoints https://${primary_ip}:2379 $@
+        etcdctl --endpoints https://${container_name}:2379 $@
     fi
 }
 
@@ -189,7 +232,7 @@ runtime_node() {
         ctx_index=$(wget -q -O - ${META_URL}/self/service/containers/${container}/create_index)
         primary_ip=$(wget -q -O - ${META_URL}/self/service/containers/${container}/primary_ip)
         if [ "${ctx_index}" -lt "${CREATE_INDEX}" ]; then
-            giddyup probe https://${primary_ip}:2379/health --loop --min 1s --max 15s --backoff 1.2
+            probe_https https://${container}:2379/health loop 1 15 1.2
         fi
     done
 
@@ -295,7 +338,7 @@ disaster_node() {
     PID=$!
 
     # wait until etcd reports healthy
-    giddyup probe https://127.0.0.1:2379/health --loop --min 1s --max 15s --backoff 1.2
+    probe_https https://127.0.0.1:2379/health loop 1 15 1.2
 
     # Disaster recovery ignores peer-urls flag, so we update it
 
