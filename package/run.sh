@@ -189,14 +189,18 @@ standalone_node() {
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
         --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
-        --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
-        --initial-cluster ${NAME}=http://${ETCD_CONTAINER_NAME}:2380 \
+        --listen-peer-urls https://0.0.0.0:2380 \
+        --initial-advertise-peer-urls https://${ETCD_CONTAINER_NAME}:2380 \
+        --initial-cluster ${NAME}=https://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state new \
         --client-cert-auth \
+        --peer-client-cert-auth \
         --trusted-ca-file $ETCD_CA_FILE \
         --key-file $ETCD_KEY_FILE \
-        --cert-file $ETCD_CERT_FILE
+        --cert-file $ETCD_CERT_FILE \
+        --peer-trusted-ca-file $ETCD_CA_FILE \
+        --peer-cert-file $ETCD_CERT_FILE \
+        --peer-key-file $ETCD_KEY_FILE
 
     cleanup $?
 }
@@ -208,13 +212,17 @@ restart_node() {
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
         --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
-        --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
+        --listen-peer-urls https://0.0.0.0:2380 \
+        --initial-advertise-peer-urls https://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
         --client-cert-auth \
+        --peer-client-cert-auth \
         --trusted-ca-file $ETCD_CA_FILE \
         --key-file $ETCD_KEY_FILE \
-        --cert-file $ETCD_CERT_FILE
+        --cert-file $ETCD_CERT_FILE \
+        --peer-trusted-ca-file $ETCD_CA_FILE \
+        --peer-cert-file $ETCD_CERT_FILE \
+        --peer-key-file $ETCD_KEY_FILE
 
     cleanup $?
 }
@@ -252,10 +260,10 @@ runtime_node() {
         if [ "$cluster" != "" ]; then
             cluster=${cluster},
         fi
-        cluster=${cluster}${cname}=http://${cip}:2380
+        cluster=${cluster}${cname}=https://${container}:2380
     done
 
-    etcdctl_quorum member add $NAME http://${ETCD_CONTAINER_NAME}:2380
+    etcdctl_quorum member add $NAME https://${ETCD_CONTAINER_NAME}:2380
 
     # write container IP to data directory for reference
     echo $IP > $ETCD_DATA_DIR/ip
@@ -266,14 +274,18 @@ runtime_node() {
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
         --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
-        --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
+        --listen-peer-urls https://0.0.0.0:2380 \
+        --initial-advertise-peer-urls https://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
         --initial-cluster $cluster \
         --client-cert-auth \
+        --peer-client-cert-auth \
         --trusted-ca-file $ETCD_CA_FILE \
         --key-file $ETCD_KEY_FILE \
-        --cert-file $ETCD_CERT_FILE
+        --cert-file $ETCD_CERT_FILE \
+        --peer-trusted-ca-file $ETCD_CA_FILE \
+        --peer-cert-file $ETCD_CERT_FILE \
+        --peer-key-file $ETCD_KEY_FILE
     cleanup $?
 }
 
@@ -298,9 +310,9 @@ recover_node() {
         fi
         cluster=${cluster}${name}=${peer_url}
     done <<< "$(etcdctl_quorum member list | grep -v unstarted)"
-    cluster=${cluster},${NAME}=http://${ETCD_CONTAINER_NAME}:2380
+    cluster=${cluster},${NAME}=https://${ETCD_CONTAINER_NAME}:2380
 
-    etcdctl_quorum member add $NAME http://${ETCD_CONTAINER_NAME}:2380
+    etcdctl_quorum member add $NAME https://${ETCD_CONTAINER_NAME}:2380
 
     # write container IP to data directory for reference
     echo $IP > $ETCD_DATA_DIR/ip
@@ -311,14 +323,18 @@ recover_node() {
         --name ${NAME} \
         --listen-client-urls https://0.0.0.0:2379 \
         --advertise-client-urls https://${ETCD_CONTAINER_NAME}:2379 \
-        --listen-peer-urls http://0.0.0.0:2380 \
-        --initial-advertise-peer-urls http://${ETCD_CONTAINER_NAME}:2380 \
+        --listen-peer-urls https://0.0.0.0:2380 \
+        --initial-advertise-peer-urls https://${ETCD_CONTAINER_NAME}:2380 \
         --initial-cluster-state existing \
         --initial-cluster $cluster \
         --client-cert-auth \
+        --peer-client-cert-auth \
         --trusted-ca-file $ETCD_CA_FILE \
         --key-file $ETCD_KEY_FILE \
-        --cert-file $ETCD_CERT_FILE
+        --cert-file $ETCD_CERT_FILE \
+        --peer-trusted-ca-file $ETCD_CA_FILE \
+        --peer-cert-file $ETCD_CERT_FILE \
+        --peer-key-file $ETCD_KEY_FILE
     cleanup $?
 }
 
@@ -349,10 +365,10 @@ disaster_node() {
     done
 
     # etcd says it is healthy, but writes fail for a while...so keep trying until it works
-    etcdctl --endpoints=https://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
+    etcdctl --endpoints=https://127.0.0.1:2379 member update $oldnode https://${ETCD_CONTAINER_NAME}:2380
     while [ "$?" != "0" ]; do
         sleep 1
-        etcdctl --endpoints=https://127.0.0.1:2379 member update $oldnode http://${ETCD_CONTAINER_NAME}:2380
+        etcdctl --endpoints=https://127.0.0.1:2379 member update $oldnode https://${ETCD_CONTAINER_NAME}:2380
     done
 
     # shutdown the node cleanly
