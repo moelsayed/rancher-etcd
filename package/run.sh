@@ -44,6 +44,7 @@ export ETCDCTL_ENDPOINT=https://etcd.${STACK_NAME}:2379
 # member name should be dashed-IP (piggyback off of retain_ip functionality)
 NAME=$(echo $IP | tr '.' '-')
 
+
 # giddyup doesn't do https auth, so we are doing this
 # probe_https URL loop|noloop MIN MAX BACKOFF
 probe_https() {
@@ -82,6 +83,22 @@ probe_https() {
       $url | grep -q '{"health": "true"}'
     return $?
   fi
+}
+
+switch_node_to_https() {
+  member_id=""
+  while [ "$member_id" == "" ]
+  do
+    member_id=$(etcdctl_one member list | grep $NAME | cut -d ":" -f 1)
+    sleep 1
+  done
+  # etcd says it is healthy, but writes fail for a while...so keep trying until it works
+  etcdctl --endpoints=https://127.0.0.1:2379 member update $member_id https://${ETCD_CONTAINER_NAME}:2380
+  while [ "$?" != "0" ]; do
+      sleep 1
+      etcdctl --endpoints=https://127.0.0.1:2379 member update $member_id https://${ETCD_CONTAINER_NAME}:2380
+  done
+
 }
 
 etcdctl_quorum() {
@@ -417,6 +434,8 @@ node() {
     # if we have a data volume and it was served by a container with same IP
     elif [ -d "$ETCD_DATA_DIR/member" ] && [ "$(cat $ETCD_DATA_DIR/ip)" == "$IP" ]; then
         echo Restarting Existing Node
+        # to handle upgrade to ssl cases
+        switch_node_to_https &
         restart_node
 
     # if this member is already registered to the cluster but no data volume, we are recovering
